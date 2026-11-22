@@ -1,232 +1,281 @@
 <script setup>
-import { ref, computed, onMounted } from "vue";
-import { RouterLink } from "vue-router";
-import api from "../services/api";
+import MainLayout from "../components/layouts/MainLayout.vue";
+import { computed, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { ChevronDown, ClipboardList, Lock, Search } from "lucide-vue-next";
+import CatalogProductCard from "../components/product/CatalogProductCard.vue";
+import { getProducts } from "../services/products";
+import { useAuthStore } from "../stores/auth";
+import { useCartStore } from "../stores/cart";
+import { useLoginPrompt } from "../composables/useLoginPrompt";
+
+const PAGE_SIZE = 8;
+
+const CATEGORY_NAMES = {
+  ATPH: "ATPH - Agribisnis Tanaman Pangan dan Hortikultura",
+  APHP: "APHP - Agribisnis Pengolahan Hasil Pertanian",
+  TBKR: "TBKR - Teknik Bodi Kendaraan Ringan",
+  TKR: "TKR - Teknik Kendaraan Ringan",
+  DKV: "DKV - Desain Komunikasi Visual",
+};
+const categoryLabel = (name) => CATEGORY_NAMES[String(name ?? "").trim().toUpperCase()] ?? name;
+const categoryName = (p) => p.category?.name ?? "Lainnya";
+
+const route = useRoute();
+const router = useRouter();
+const auth = useAuthStore();
+const cart = useCartStore();
+const { requireLogin } = useLoginPrompt();
 
 const products = ref([]);
-const categories = ref([]);
-const searchQuery = ref("");
-const selectedCategory = ref("Semua");
-const isLoading = ref(true);
-const errorMessage = ref("");
+const loading = ref(true);
+const failed = ref(false);
 
-const formatPrice = (price) => {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(Number(price) || 0);
-};
+const search = ref(typeof route.query.q === "string" ? route.query.q : "");
+const category = ref("all");
+const sort = ref("newest");
+const page = ref(1);
+const addedIds = ref([]);
 
-const fetchProducts = async () => {
-  isLoading.value = true;
-  errorMessage.value = "";
+watch(
+  () => route.query.q,
+  (q) => {
+    search.value = typeof q === "string" ? q : "";
+  },
+);
 
+const canOrder = computed(() => !auth.isLoggedIn || auth.user?.role === "user");
+
+async function load() {
+  loading.value = true;
+  failed.value = false;
   try {
-    const response = await api.get("/products");
-    products.value = response.data;
-
-    const categoryMap = new Map();
-
-    response.data.forEach((product) => {
-      if (product.category) {
-        categoryMap.set(product.category.id, product.category);
-      }
-    });
-
-    categories.value = [...categoryMap.values()];
-  } catch (error) {
-    console.error("Gagal mengambil produk:", error);
-    errorMessage.value =
-      "Produk belum dapat dimuat. Periksa koneksi ke server Laravel.";
+    products.value = await getProducts();
+  } catch {
+    failed.value = true;
   } finally {
-    isLoading.value = false;
+    loading.value = false;
   }
-};
+}
+onMounted(load);
 
-const filteredProducts = computed(() => {
-  return products.value.filter((product) => {
-    const query = searchQuery.value.toLowerCase().trim();
-
-    const matchesSearch =
-      product.name.toLowerCase().includes(query) ||
-      (product.description || "").toLowerCase().includes(query);
-
-    const matchesCategory =
-      selectedCategory.value === "Semua" ||
-      product.category?.id === Number(selectedCategory.value);
-
-    return matchesSearch && matchesCategory;
-  });
+const categories = computed(() => {
+  const counts = new Map();
+  for (const p of products.value) {
+    const name = categoryName(p);
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([name, count]) => ({ name, count }));
 });
 
-onMounted(fetchProducts);
+const byNewest = (a, b) => new Date(b.created_at) - new Date(a.created_at) || b.id - a.id;
+const sorters = {
+  newest: byNewest,
+  "price-asc": (a, b) => Number(a.price) - Number(b.price),
+  "price-desc": (a, b) => Number(b.price) - Number(a.price),
+  name: (a, b) => String(a.name).localeCompare(String(b.name), "id"),
+};
+
+const filtered = computed(() => {
+  const q = search.value.trim().toLowerCase();
+  const list = products.value.filter((p) => {
+    if (category.value !== "all" && categoryName(p) !== category.value) return false;
+    if (!q) return true;
+    return [p.name, p.description, categoryName(p)].some((text) =>
+      String(text ?? "").toLowerCase().includes(q),
+    );
+  });
+  return [...list].sort(sorters[sort.value] ?? byNewest);
+});
+
+const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / PAGE_SIZE)));
+const pageItems = computed(() => filtered.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE));
+const rangeStart = computed(() => (filtered.value.length ? (page.value - 1) * PAGE_SIZE + 1 : 0));
+const rangeEnd = computed(() => Math.min(page.value * PAGE_SIZE, filtered.value.length));
+
+watch([search, category, sort], () => {
+  page.value = 1;
+});
+watch(totalPages, (n) => {
+  if (page.value > n) page.value = n;
+});
+
+const pageNumbers = computed(() => {
+  const total = totalPages.value;
+  const current = page.value;
+  const wanted = new Set([1, total, current - 1, current, current + 1]);
+  const numbers = [...wanted].filter((n) => n >= 1 && n <= total).sort((a, b) => a - b);
+  const result = [];
+  numbers.forEach((n, i) => {
+    if (i > 0 && n - numbers[i - 1] > 1) result.push("...");
+    result.push(n);
+  });
+  return result;
+});
+
+function goToPage(n) {
+  if (n < 1 || n > totalPages.value) return;
+  page.value = n;
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function resetFilters() {
+  search.value = "";
+  category.value = "all";
+  sort.value = "newest";
+  if (route.query.q) router.replace({ name: "products" });
+}
+
+function addToDraft(product) {
+  requireLogin("Untuk menambahkan produk ke draft pesanan, masuk ke akun Anda.", () => {
+    if (!cart.add(product)) return;
+    addedIds.value = [...addedIds.value, product.id];
+    setTimeout(() => {
+      addedIds.value = addedIds.value.filter((id) => id !== product.id);
+    }, 1500);
+  });
+}
+
+function openDraft() {
+  requireLogin("Untuk melihat draft pesanan Anda, masuk ke akun terlebih dahulu.", () =>
+    router.push({ name: "cart" }),
+  );
+}
+
+const gridClass = "grid-cols-1 @xl:grid-cols-2 @4xl:grid-cols-3 @6xl:grid-cols-4";
+const selectClass =
+  "h-11 w-full appearance-none rounded-xl border border-neutral-200 bg-white pl-3.5 pr-9 text-sm text-neutral-800 outline-none transition focus:border-primary-700 focus:ring-2 focus:ring-primary-100";
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-50 text-slate-800">
-    <header class="border-b border-slate-200 bg-white">
-      <div
-        class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-4"
-      >
-        <RouterLink to="/" class="text-2xl font-black text-emerald-700">
-          TEFA<span class="text-slate-800">.</span>
-        </RouterLink>
-
-        <nav class="flex items-center gap-4 text-sm font-medium">
-          <RouterLink to="/" class="hover:text-emerald-700">
-            Beranda
-          </RouterLink>
-          <RouterLink to="/products" class="text-emerald-700">
-            Katalog
-          </RouterLink>
-          <RouterLink to="/login" class="hover:text-emerald-700">
-            Masuk
-          </RouterLink>
-        </nav>
-      </div>
-    </header>
-
-    <main class="mx-auto max-w-7xl px-5 py-10">
-      <section class="mb-8 rounded-3xl bg-emerald-800 p-8 text-white md:p-12">
-        <p
-          class="mb-3 text-sm font-semibold uppercase tracking-widest text-emerald-200"
-        >
-          Teaching Factory
-        </p>
-
-        <h1 class="mb-4 text-3xl font-black md:text-5xl">
-          Katalog Produk TEFA
+  <MainLayout>
+    <section class="space-y-6">
+      <div class="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
+        <p class="text-[11px] font-bold uppercase tracking-wide text-primary-600">Katalog</p>
+        <h1 class="mt-2 text-2xl font-extrabold tracking-tight text-neutral-900 sm:text-3xl">
+          Katalog Produk &amp; Layanan Vokasi
         </h1>
-
-        <p class="max-w-2xl leading-7 text-emerald-50">
-          Temukan produk hasil karya dan pembelajaran siswa yang tersedia di
-          Teaching Factory sekolah kami.
+        <p class="mt-2 text-sm text-neutral-500">
+          Pesan hasil karya riil siswa SMK dengan spesifikasi sesuai standar industri.
         </p>
-      </section>
 
-      <section class="mb-8 flex flex-col gap-4 md:flex-row">
-        <input
-          v-model="searchQuery"
-          type="search"
-          placeholder="Cari nama atau deskripsi produk..."
-          class="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
-        />
+        <div class="mt-5 flex flex-col gap-3 lg:flex-row">
+          <label class="relative block flex-1">
+            <span class="sr-only">Cari produk atau jasa</span>
+            <Search class="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-neutral-400" />
+            <input v-model="search" type="search" placeholder="Cari produk atau jasa..."
+              class="h-11 w-full rounded-xl border border-neutral-200 bg-neutral-50 pl-10 pr-3 text-sm outline-none transition placeholder:text-neutral-400 focus:border-primary-700 focus:ring-2 focus:ring-primary-100" />
+          </label>
 
-        <select
-          v-model="selectedCategory"
-          class="rounded-xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-emerald-600"
-        >
-          <option value="Semua">Semua kategori</option>
-          <option
-            v-for="category in categories"
-            :key="category.id"
-            :value="String(category.id)"
-          >
-            {{ category.name }}
-          </option>
-        </select>
-      </section>
+          <div class="relative lg:w-56">
+            <select v-model="category" aria-label="Kategori" :class="selectClass">
+              <option value="all">Semua Kategori</option>
+              <option v-for="c in categories" :key="c.name" :value="c.name">{{ categoryLabel(c.name) }}</option>
+            </select>
+            <ChevronDown
+              class="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-neutral-400" />
+          </div>
 
-      <div v-if="isLoading" class="rounded-2xl bg-white px-6 py-16 text-center">
-        <p class="font-semibold text-slate-700">Memuat produk...</p>
-        <p class="mt-2 text-sm text-slate-500">
-          Mengambil data dari server TEFA.
-        </p>
+          <div class="relative lg:w-48">
+            <select v-model="sort" aria-label="Urutkan" :class="selectClass">
+              <option value="newest">Urutkan: Terbaru</option>
+              <option value="price-asc">Harga terendah</option>
+              <option value="price-desc">Harga tertinggi</option>
+              <option value="name">Nama A-Z</option>
+            </select>
+            <ChevronDown
+              class="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-neutral-400" />
+          </div>
+
+          <button v-if="canOrder" type="button"
+            class="flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 text-sm font-semibold text-neutral-800 transition-colors hover:bg-neutral-50"
+            @click="openDraft">
+            <ClipboardList v-if="auth.isLoggedIn" class="size-4 text-primary-700" />
+            <Lock v-else class="size-4 text-neutral-500" />
+            Draft Pesanan
+            <span v-if="auth.isLoggedIn && cart.items.length"
+              class="flex size-5 items-center justify-center rounded-full bg-primary-700 text-[11px] font-bold text-white">
+              {{ cart.items.length }}
+            </span>
+          </button>
+        </div>
+
+        <div v-if="categories.length" class="mt-4 flex flex-wrap gap-2" role="group" aria-label="Filter kategori">
+          <button type="button" class="rounded-full border px-3.5 py-1.5 text-[13px] font-semibold transition-colors"
+            :class="category === 'all'
+              ? 'border-primary-700 bg-primary-700 text-white'
+              : 'border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50'" @click="category = 'all'">
+            Semua ({{ products.length }})
+          </button>
+          <button v-for="c in categories" :key="c.name" type="button" :title="categoryLabel(c.name)"
+            class="rounded-full border px-3.5 py-1.5 text-[13px] font-semibold transition-colors" :class="category === c.name
+              ? 'border-primary-700 bg-primary-700 text-white'
+              : 'border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50'" @click="category = c.name">
+            {{ c.name }} ({{ c.count }})
+          </button>
+        </div>
       </div>
 
-      <div
-        v-else-if="errorMessage"
-        class="rounded-2xl border border-red-200 bg-red-50 p-6 text-center"
-      >
-        <p class="font-semibold text-red-700">{{ errorMessage }}</p>
-        <button
-          @click="fetchProducts"
-          class="mt-4 rounded-xl bg-red-600 px-5 py-2.5 font-semibold text-white hover:bg-red-700"
-        >
-          Coba lagi
-        </button>
+      <div class="@container">
+        <div v-if="loading" :class="gridClass" class="grid gap-4">
+          <div v-for="n in 8" :key="n" class="h-80 animate-pulse rounded-3xl border border-neutral-200 bg-white"></div>
+        </div>
+
+        <div v-else-if="failed" class="rounded-3xl border border-neutral-200 bg-white p-8 text-center">
+          <p class="text-sm text-neutral-600">Produk belum dapat dimuat. Silakan coba beberapa saat lagi.</p>
+          <button type="button"
+            class="mt-4 rounded-xl border border-neutral-300 px-5 py-2 text-sm font-semibold text-neutral-800 hover:bg-neutral-50"
+            @click="load">
+            Muat Ulang
+          </button>
+        </div>
+
+        <div v-else-if="!filtered.length" class="rounded-3xl border border-neutral-200 bg-white p-8 text-center">
+          <p class="text-sm font-semibold text-neutral-800">Produk tidak ditemukan</p>
+          <p class="mt-1 text-sm text-neutral-500">Coba kata kunci atau kategori lain.</p>
+          <button type="button"
+            class="mt-4 rounded-xl border border-neutral-300 px-5 py-2 text-sm font-semibold text-neutral-800 hover:bg-neutral-50"
+            @click="resetFilters">
+            Atur Ulang Filter
+          </button>
+        </div>
+
+        <template v-else>
+          <div :class="gridClass" class="grid gap-4">
+            <CatalogProductCard v-for="p in pageItems" :key="p.id" :product="p" :can-order="canOrder"
+              :added="addedIds.includes(p.id)" @add="addToDraft" />
+          </div>
+
+          <div class="mt-6 flex flex-col items-center justify-between gap-3 sm:flex-row">
+            <p class="text-sm text-neutral-500">
+              Menampilkan <span class="font-semibold text-neutral-800">{{ rangeStart }}-{{ rangeEnd }}</span>
+              dari <span class="font-semibold text-neutral-800">{{ filtered.length }}</span> produk
+            </p>
+
+            <nav v-if="totalPages > 1" class="flex items-center gap-1.5" aria-label="Halaman katalog">
+              <button type="button" :disabled="page === 1"
+                class="h-9 rounded-xl border border-neutral-200 bg-white px-3 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                @click="goToPage(page - 1)">
+                Sebelumnya
+              </button>
+              <template v-for="(n, i) in pageNumbers" :key="`${n}-${i}`">
+                <span v-if="n === '...'" class="px-1 text-neutral-400">...</span>
+                <button v-else type="button" :aria-current="n === page ? 'page' : undefined"
+                  class="size-9 rounded-xl border text-[13px] font-semibold" :class="n === page
+                    ? 'border-primary-700 bg-primary-700 text-white'
+                    : 'border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50'" @click="goToPage(n)">
+                  {{ n }}
+                </button>
+              </template>
+              <button type="button" :disabled="page === totalPages"
+                class="h-9 rounded-xl border border-neutral-200 bg-white px-3 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+                @click="goToPage(page + 1)">
+                Selanjutnya
+              </button>
+            </nav>
+          </div>
+        </template>
       </div>
-
-      <template v-else>
-        <div class="mb-5 flex items-center justify-between gap-3">
-          <h2 class="text-xl font-bold">Produk tersedia</h2>
-          <p class="text-sm text-slate-500">
-            {{ filteredProducts.length }} produk
-          </p>
-        </div>
-
-        <div
-          v-if="filteredProducts.length"
-          class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3"
-        >
-          <article
-            v-for="product in filteredProducts"
-            :key="product.id"
-            class="overflow-hidden rounded-2xl border border-slate-200 bg-white transition hover:-translate-y-1 hover:shadow-lg"
-          >
-            <div class="flex h-48 items-center justify-center bg-emerald-50">
-              <img
-                v-if="product.image"
-                :src="`http://127.0.0.1:8000/storage/${product.image}`"
-                :alt="product.name"
-                class="h-full w-full object-cover"
-                @error="(event) => (event.target.style.display = 'none')"
-              />
-
-              <span v-if="!product.image" class="text-5xl">📦</span>
-            </div>
-
-            <div class="p-5">
-              <p
-                class="mb-2 text-xs font-bold uppercase tracking-wide text-emerald-700"
-              >
-                {{ product.category?.name || "Tanpa kategori" }}
-              </p>
-
-              <h3 class="mb-2 text-xl font-bold">
-                {{ product.name }}
-              </h3>
-
-              <p
-                class="mb-4 line-clamp-2 min-h-10 text-sm leading-6 text-slate-500"
-              >
-                {{ product.description || "Belum ada deskripsi produk." }}
-              </p>
-
-              <div class="mb-4 flex items-end justify-between gap-3">
-                <p class="font-extrabold text-emerald-700">
-                  {{ formatPrice(product.price) }}
-                </p>
-                <p class="text-xs text-slate-500">Stok: {{ product.stock }}</p>
-              </div>
-
-              <RouterLink
-                :to="`/products/${product.id}`"
-                class="block rounded-xl bg-emerald-700 px-4 py-3 text-center font-semibold text-white transition hover:bg-emerald-800"
-              >
-                Lihat detail
-              </RouterLink>
-            </div>
-          </article>
-        </div>
-
-        <div
-          v-else
-          class="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center"
-        >
-          <p class="text-lg font-bold">Produk tidak ditemukan</p>
-          <p class="mt-2 text-sm text-slate-500">
-            Coba kata kunci atau kategori yang berbeda.
-          </p>
-        </div>
-      </template>
-    </main>
-
-    <footer
-      class="mt-12 border-t border-slate-200 bg-white px-5 py-6 text-center text-sm text-slate-500"
-    >
-      © {{ new Date().getFullYear() }} TEFA Sekolah. Semua hak dilindungi.
-    </footer>
-  </div>
+    </section>
+  </MainLayout>
 </template>
