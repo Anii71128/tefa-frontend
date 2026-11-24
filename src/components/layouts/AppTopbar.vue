@@ -59,21 +59,21 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
         <div class="flex items-center gap-2 sm:gap-3">
             <template v-if="auth.isLoggedIn">
                 <NotificationBell />
-                <button type="button"
+                <RouterLink to="/faq"
                     class="flex size-9 items-center justify-center rounded-full text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-800"
-                    aria-label="Bantuan">
+                    aria-label="Bantuan (FAQ)" title="Bantuan (FAQ)">
                     <CircleHelp class="size-5" />
-                </button>
+                </RouterLink>
 
                 <UserMenu />
             </template>
 
             <template v-else>
-                <button type="button"
+                <RouterLink to="/faq"
                     class="flex size-9 items-center justify-center rounded-full text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-800"
-                    aria-label="Bantuan">
+                    aria-label="Bantuan (FAQ)" title="Bantuan (FAQ)">
                     <CircleHelp class="size-5" />
-                </button>
+                </RouterLink>
                 <RouterLink to="/login"
                     class="rounded-xl border border-neutral-300 px-4 py-2 text-sm font-semibold text-neutral-700 hover:bg-neutral-50">
                     Masuk</RouterLink>
