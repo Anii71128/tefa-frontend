@@ -2,14 +2,14 @@
 import MainLayout from "../components/layouts/MainLayout.vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ChevronDown, ClipboardList, Lock, Search } from "lucide-vue-next";
+import { ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Lock, Search } from "lucide-vue-next";
 import CatalogProductCard from "../components/product/CatalogProductCard.vue";
 import { getProducts } from "../services/products";
 import { useAuthStore } from "../stores/auth";
 import { useCartStore } from "../stores/cart";
 import { useLoginPrompt } from "../composables/useLoginPrompt";
 
-const PAGE_SIZE = 8;
+const PAGE_SIZE = 12;
 
 const CATEGORY_NAMES = {
   ATPH: "ATPH - Agribisnis Tanaman Pangan dan Hortikultura",
@@ -34,7 +34,15 @@ const failed = ref(false);
 const search = ref(typeof route.query.q === "string" ? route.query.q : "");
 const category = ref("all");
 const sort = ref("newest");
-const page = ref(1);
+const page = computed(() => {
+  const n = Number.parseInt(route.query.page, 10);
+  return Number.isInteger(n) && n > 0 ? n : 1;
+});
+
+function setPage(n, { replace = false } = {}) {
+  const query = { ...route.query, page: n > 1 ? String(n) : undefined };
+  return replace ? router.replace({ query }) : router.push({ query });
+}
 const addedIds = ref([]);
 
 watch(
@@ -94,10 +102,10 @@ const rangeStart = computed(() => (filtered.value.length ? (page.value - 1) * PA
 const rangeEnd = computed(() => Math.min(page.value * PAGE_SIZE, filtered.value.length));
 
 watch([search, category, sort], () => {
-  page.value = 1;
+  if (page.value !== 1) setPage(1, { replace: true });
 });
 watch(totalPages, (n) => {
-  if (page.value > n) page.value = n;
+  if (!loading.value && page.value > n) setPage(n, { replace: true });
 });
 
 const pageNumbers = computed(() => {
@@ -107,7 +115,9 @@ const pageNumbers = computed(() => {
   const numbers = [...wanted].filter((n) => n >= 1 && n <= total).sort((a, b) => a - b);
   const result = [];
   numbers.forEach((n, i) => {
-    if (i > 0 && n - numbers[i - 1] > 1) result.push("...");
+    const gap = i > 0 ? n - numbers[i - 1] : 1;
+    if (gap === 2) result.push(n - 1); // hanya satu halaman terlewat: tampilkan angkanya
+    else if (gap > 2) result.push("...");
     result.push(n);
   });
   return result;
@@ -115,8 +125,7 @@ const pageNumbers = computed(() => {
 
 function goToPage(n) {
   if (n < 1 || n > totalPages.value) return;
-  page.value = n;
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  setPage(n);
 }
 
 function resetFilters() {
@@ -159,22 +168,13 @@ const selectClass =
           Pesan hasil karya riil siswa SMK dengan spesifikasi sesuai standar industri.
         </p>
 
-        <div class="mt-5 flex flex-col gap-3 lg:flex-row">
+        <div class="mt-5 flex flex-col gap-4 lg:flex-row">
           <label class="relative block flex-1">
             <span class="sr-only">Cari produk atau jasa</span>
             <Search class="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-neutral-400" />
             <input v-model="search" type="search" placeholder="Cari produk atau jasa..."
               class="h-11 w-full rounded-xl border border-neutral-200 bg-neutral-50 pl-10 pr-3 text-sm outline-none transition placeholder:text-neutral-400 focus:border-primary-700 focus:ring-2 focus:ring-primary-100" />
           </label>
-
-          <div class="relative lg:w-56">
-            <select v-model="category" aria-label="Kategori" :class="selectClass">
-              <option value="all">Semua Kategori</option>
-              <option v-for="c in categories" :key="c.name" :value="c.name">{{ categoryLabel(c.name) }}</option>
-            </select>
-            <ChevronDown
-              class="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-neutral-400" />
-          </div>
 
           <div class="relative lg:w-48">
             <select v-model="sort" aria-label="Urutkan" :class="selectClass">
@@ -205,13 +205,13 @@ const selectClass =
             :class="category === 'all'
               ? 'border-primary-700 bg-primary-700 text-white'
               : 'border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50'" @click="category = 'all'">
-            Semua ({{ products.length }})
+            Semua
           </button>
           <button v-for="c in categories" :key="c.name" type="button" :title="categoryLabel(c.name)"
             class="rounded-full border px-3.5 py-1.5 text-[13px] font-semibold transition-colors" :class="category === c.name
               ? 'border-primary-700 bg-primary-700 text-white'
               : 'border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50'" @click="category = c.name">
-            {{ c.name }} ({{ c.count }})
+            {{ c.name }}
           </button>
         </div>
       </div>
@@ -246,33 +246,43 @@ const selectClass =
               :added="addedIds.includes(p.id)" @add="addToDraft" />
           </div>
 
-          <div class="mt-6 flex flex-col items-center justify-between gap-3 sm:flex-row">
-            <p class="text-sm text-neutral-500">
-              Menampilkan <span class="font-semibold text-neutral-800">{{ rangeStart }}-{{ rangeEnd }}</span>
-              dari <span class="font-semibold text-neutral-800">{{ filtered.length }}</span> produk
-            </p>
-
-            <nav v-if="totalPages > 1" class="flex items-center gap-1.5" aria-label="Halaman katalog">
-              <button type="button" :disabled="page === 1"
-                class="h-9 rounded-xl border border-neutral-200 bg-white px-3 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+          <div class="mt-10 flex flex-col items-center gap-3 border-t border-neutral-200 pt-6">
+            <nav v-if="totalPages > 1" aria-label="Halaman katalog" class="flex items-center gap-1">
+              <button type="button" :disabled="page === 1" aria-label="Halaman sebelumnya"
+                class="flex size-10 items-center justify-center rounded-md text-neutral-500 outline-none transition-colors hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-primary-200 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:text-neutral-500"
                 @click="goToPage(page - 1)">
-                Sebelumnya
+                <ChevronLeft class="size-5" />
               </button>
-              <template v-for="(n, i) in pageNumbers" :key="`${n}-${i}`">
-                <span v-if="n === '...'" class="px-1 text-neutral-400">...</span>
-                <button v-else type="button" :aria-current="n === page ? 'page' : undefined"
-                  class="size-9 rounded-xl border text-[13px] font-semibold" :class="n === page
-                    ? 'border-primary-700 bg-primary-700 text-white'
-                    : 'border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50'" @click="goToPage(n)">
-                  {{ n }}
-                </button>
-              </template>
-              <button type="button" :disabled="page === totalPages"
-                class="h-9 rounded-xl border border-neutral-200 bg-white px-3 text-[13px] font-semibold text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50"
+
+              <!-- Layar sedang dan besar: nomor halaman -->
+              <div class="hidden items-center gap-1 sm:flex">
+                <template v-for="(n, i) in pageNumbers" :key="`${n}-${i}`">
+                  <span v-if="n === '...'"
+                    class="flex size-10 items-center justify-center text-sm text-neutral-400">…</span>
+                  <button v-else type="button" :aria-current="n === page ? 'page' : undefined"
+                    :aria-label="`Halaman ${n}`"
+                    class="relative flex h-10 min-w-10 items-center justify-center rounded-md px-1 text-sm font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary-200"
+                    :class="n === page ? 'text-primary-800' : 'text-neutral-500 hover:text-neutral-900'"
+                    @click="goToPage(n)">
+                    {{ n }}
+                    <span v-if="n === page"
+                      class="absolute inset-x-1.5 -bottom-0.5 h-0.5 rounded-full bg-primary-700"></span>
+                  </button>
+                </template>
+              </div>
+
+              <!-- HP: ringkas jadi "Halaman 1 dari 3" -->
+              <span class="px-3 text-sm font-semibold text-neutral-700 sm:hidden">
+                Halaman {{ page }} dari {{ totalPages }}
+              </span>
+
+              <button type="button" :disabled="page === totalPages" aria-label="Halaman berikutnya"
+                class="flex size-10 items-center justify-center rounded-md text-neutral-500 outline-none transition-colors hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-primary-200 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:text-neutral-500"
                 @click="goToPage(page + 1)">
-                Selanjutnya
+                <ChevronRight class="size-5" />
               </button>
             </nav>
+
           </div>
         </template>
       </div>

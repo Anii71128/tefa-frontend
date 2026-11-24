@@ -34,18 +34,22 @@ const detailLink = computed(() => ({ name: "product-detail", params: { id: props
         </RouterLink>
 
         <div class="flex flex-1 flex-col p-4">
-            <h3 class="line-clamp-2 min-h-11 text-base font-extrabold leading-snug text-neutral-900">
+            <h3 class="line-clamp-1 text-base font-extrabold leading-snug text-neutral-900" :title="product.name">
                 {{ product.name }}
             </h3>
-            <p class="mt-1 line-clamp-2 h-10 text-[12px] leading-relaxed text-neutral-500">
+            <p class="mt-1 line-clamp-2 text-[12px] leading-relaxed text-neutral-500">
                 {{ product.description }}
             </p>
-            <p class="mt-2 text-lg font-extrabold text-neutral-900">{{ formatRupiah(product.price) }}</p>
-            <p class="mt-0.5 text-xs font-medium" :class="soldOut ? 'text-error-600' : 'text-primary-700'">
-                {{ soldOut ? "Stok habis" : `Stok ${product.stock}` }}
-            </p>
 
-            <div class="mt-auto flex gap-2 pt-4">
+            <!-- Bagian bawah selalu menempel ke dasar kartu supaya sejajar antarkartu -->
+            <div class="mt-auto pt-3">
+                <p class="text-lg font-extrabold text-neutral-900">{{ formatRupiah(product.price) }}</p>
+                <p class="mt-0.5 text-xs font-medium" :class="soldOut ? 'text-error-600' : 'text-primary-700'">
+                    {{ soldOut ? "Stok habis" : `Stok ${product.stock}` }}
+                </p>
+            </div>
+
+            <div class="flex gap-2 pt-3">
                 <RouterLink :to="detailLink"
                     class="flex h-10 flex-1 items-center justify-center rounded-xl border border-neutral-300 bg-white px-3 text-[13px] font-semibold text-neutral-800 transition-colors hover:bg-neutral-50">
                     Detail
